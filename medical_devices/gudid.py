@@ -1,25 +1,22 @@
-"""Module for downloading medical devices data from the FDA"""
+"""Module for downloading medical devices data from the Global Unique Device
+Identification Database (GUDID)
+"""
 import asyncio
 import json
 import os
 import requests
-import sys
 
 from aiohttp import ClientSession
-from typing import Dict, List, Optional, NoReturn
+from typing import Dict, List, Optional
+from .utils import log_fatal
 
 GUDID_DATA_DIR = 'data/gudid/'
 GUDID_URI = 'https://accessgudid.nlm.nih.gov/api/v2/devices/implantable/list.json'
 GUDID_TOTAL_PAGES_KEY = 'X-Total-Pages'
 
 
-def log_fatal(err: str) -> NoReturn:
-    print(err, file=sys.stderr)
-    sys.exit(1)
-
-
-async def gudid():
-    """Get the devices from the GUDID database"""
+async def gen_gudid():
+    """Get the devices from the GUDID"""
     r = requests.head(GUDID_URI)
     if r.status_code != requests.codes.ok:
         log_fatal(f'Got status code {r.status_code} from endpoint {GUDID_URI}')
@@ -77,5 +74,5 @@ async def gen_gudid_page_json(
 
 if __name__ == '__main__':
     loop = asyncio.get_event_loop()
-    devices = loop.run_until_complete(gudid())
+    devices = loop.run_until_complete(gen_gudid())
     print(len(devices))
