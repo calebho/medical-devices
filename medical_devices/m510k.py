@@ -5,7 +5,8 @@ import os
 import zipfile
 
 from aiohttp import ClientSession
-from typing import List, Dict
+from datetime import datetime
+from typing import List, Dict, Optional, Union
 from urllib.parse import urlparse
 
 M510K_URIS = {
@@ -22,14 +23,16 @@ M510K_URIS = {
 }
 M510K_DATA_DIR = 'data/510k'
 
+TVal = Optional[Union[str, bool, datetime]]
 
-async def gen_510k() -> List[Dict[str, str]]:
+
+async def gen_510k() -> List[Dict[str, TVal]]:
     if not os.path.exists(M510K_DATA_DIR):
         os.makedirs(M510K_DATA_DIR, mode=0o755)
     async with ClientSession() as session:
         data = await asyncio.gather(*(gen_one_510k(session, uri)
                                       for uri in M510K_URIS))
-    devices: List[Dict[str, str]] = []
+    devices: List[Dict[str, TVal]] = []
     for item in data:
         devices.extend(item)
     return devices
@@ -38,7 +41,7 @@ async def gen_510k() -> List[Dict[str, str]]:
 async def gen_one_510k(
         session: ClientSession,
         uri: str,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, TVal]]:
     path = urlparse(uri).path
     zipname = os.path.basename(path)
     base_fname = zipname[:-4] + '.txt'
@@ -59,5 +62,16 @@ async def gen_one_510k(
         headers = f.readline().strip().split('|')
         for line in f:
             values = line.strip().split('|')
-            devices.append(dict(zip(headers, values)))
+            device: Dict[str, TVal] = {}
+            for header, value in zip(headers, values):
+                if value == '':
+                    device[header] = None
+                elif value in {'Y', 'N'}:
+                    device[header] = True if value == 'Y' else False
+                else:
+                    try:
+                        device[header] = datetime.strptime(value, '%m/%d/%Y')
+                    except ValueError:
+                        device[header] = value
+            devices.append(device)
     return devices
