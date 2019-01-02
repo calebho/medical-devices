@@ -2,74 +2,51 @@
 Identification Database (GUDID)
 """
 import asyncio
-import json
+import io
+import time
 import os
-import requests
+import zipfile
 
-from aiohttp import ClientSession
-from typing import Dict, List, Optional
-from .utils import log_fatal
+from aiohttp import ClientSession, ClientTimeout
+from typing import Dict, List
 
 GUDID_DATA_DIR = 'data/gudid/'
-GUDID_URI = 'https://accessgudid.nlm.nih.gov/api/v2/devices/implantable/list.json'
-GUDID_TOTAL_PAGES_KEY = 'X-Total-Pages'
+DEVICE_DATA_FNAME = 'device.txt'
 
 
-async def gen_gudid():
+async def gen_gudid() -> List[Dict[str, str]]:
     """Get the devices from the GUDID"""
-    r = requests.head(GUDID_URI)
-    if r.status_code != requests.codes.ok:
-        log_fatal(f'Got status code {r.status_code} from endpoint {GUDID_URI}')
-    try:
-        value = r.headers[GUDID_TOTAL_PAGES_KEY]
-        num_pages = int(value)
-    except KeyError:
-        log_fatal(
-            f"Entry '{GUDID_TOTAL_PAGES_KEY}' does not exist in header response"
-        )
-    except ValueError:
-        log_fatal(
-            f"Could not coerce '{GUDID_TOTAL_PAGES_KEY}' with value '{value}'")
-
-    async with ClientSession() as session:
-        pages = await gen_gudid_pages(session, num_pages)
-    devices = []
-    for page in pages:
-        devices.extend(page['devices'])
-    return devices
-
-
-async def gen_gudid_pages(
-        session: ClientSession,
-        num_pages: int,
-) -> List[Dict[str, str]]:
-    dicts = await asyncio.gather(*(gen_gudid_page_json(session, page_num)
-                                   for page_num in range(1, num_pages + 1)))
-    return [d for d in dicts if d is not None]
-
-
-async def gen_gudid_page_json(
-        session: ClientSession,
-        page_num: int,
-) -> Optional[Dict[str, str]]:
     if not os.path.exists(GUDID_DATA_DIR):
         os.makedirs(GUDID_DATA_DIR, mode=0o755)
-    fname = os.path.join(GUDID_DATA_DIR, f'{page_num}.json')
-    try:
-        with open(fname) as f:
-            return json.load(f)
-    except FileNotFoundError:
-        params = {'page': page_num}
-        try:
-            r = await session.get(
-                GUDID_URI, params=params, raise_for_status=True)
-        except Exception:
-            return None
-        else:
-            obj = await r.json()
-            with open(fname, 'w') as f:
-                json.dump(obj, f)
-            return obj
+    async with ClientSession(timeout=ClientTimeout(None)) as session:
+        await gen_gudid_data(session)
+
+    fname = os.path.join(GUDID_DATA_DIR, DEVICE_DATA_FNAME)
+    data = []
+    with open(fname) as f:
+        headers = f.readline().strip().split('|')
+        for line in f:
+            values = line.strip().split('|')
+            data.append(dict(zip(headers, values)))
+    return data
+
+
+async def gen_gudid_data(session: ClientSession) -> None:
+    if os.path.exists(os.path.join(GUDID_DATA_DIR, DEVICE_DATA_FNAME)):
+        return
+
+    uri = get_gudid_data_uri()
+    r = await session.get(uri, raise_for_status=True)
+    buf = io.BytesIO()
+    async for b in r.content.iter_any():
+        buf.write(b)
+    with zipfile.ZipFile(buf) as z:
+        z.extractall(path=GUDID_DATA_DIR)
+
+
+def get_gudid_data_uri() -> str:
+    date_str = time.strftime('%Y%m') + '01'
+    return f'https://accessgudid.nlm.nih.gov/release_files/download/AccessGUDID_Delimited_Full_Release_{date_str}.zip'
 
 
 if __name__ == '__main__':
